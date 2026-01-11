@@ -1,0 +1,167 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserTier {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum ContentType {
+  BLOG
+  SOCIAL
+  EMAIL
+  MARKETING
+}
+
+enum Tone {
+  PROFESSIONAL
+  CASUAL
+  FORMAL
+  FRIENDLY
+}
+
+// User model
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  tier          UserTier  @default(FREE)
+
+  // Usage limits
+  monthlyTokenLimit  Int       @default(100000)
+  tokensUsedThisMonth Int      @default(0)
+
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  contents      Content[]
+  templates     Template[]
+  apiKeys       ApiKey[]
+  usageRecords  UsageRecord[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// Content model - stores generated content
+model Content {
+  id            String      @id @default(cuid())
+
+  // Generation details
+  prompt        String
+  content       String      @db.Text
+  contentType   ContentType
+  tone          Tone
+
+  // Model info
+  model         String
+  tokensUsed    Int
+
+  // Versioning
+  version       Int         @default(1)
+  parentId      String?
+  parent        Content?    @relation("ContentVersions", fields: [parentId], references: [id])
+  versions      Content[]   @relation("ContentVersions")
+
+  // Relations
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  templateId    String?
+  template      Template?   @relation(fields: [templateId], references: [id])
+
+  // Metadata (flexible JSON)
+  metadata      Json?       @default("{}")
+
+  // Timestamps
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([contentType])
+  @@index([createdAt])
+  @@map("contents")
+}
+
+// Template model - reusable prompts
+model Template {
+  id              String      @id @default(cuid())
+  name            String
+  description     String?
+  contentType     ContentType
+
+  // Template structure
+  promptTemplate  String      @db.Text    // "Write a {contentType} about {topic}"
+  variables       Json        @default("[]")  // ["topic", "audience"]
+
+  // Visibility
+  isPublic        Boolean     @default(false)
+
+  // Relations
+  createdById     String
+  createdBy       User        @relation(fields: [createdById], references: [id])
+  contents        Content[]
+
+  // Timestamps
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([contentType])
+  @@index([isPublic])
+  @@map("templates")
+}
+
+// API Key model - for programmatic access
+model ApiKey {
+  id            String    @id @default(cuid())
+  name          String
+  keyHash       String    @unique   // Store hashed, not plain text
+  keyPrefix     String              // First 8 chars for identification
+
+  // Security
+  lastUsedAt    DateTime?
+  expiresAt     DateTime?
+
+  // Relations
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime  @default(now())
+
+  @@index([keyHash])
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// Usage tracking for billing
+model UsageRecord {
+  id            String    @id @default(cuid())
+
+  // Usage details
+  tokensUsed    Int
+  costUsd       Decimal   @db.Decimal(10, 6)
+  model         String
+  operation     String    // "generate", "stream", "fine-tune"
+
+  // Relations
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("usage_records")
+}
